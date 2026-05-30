@@ -1,0 +1,21 @@
+node_modules/
+dist/
+*.log
+.env
+.env.local
+.DS_Store
+
+# tsc / vite build artifacts
+**/*.tsbuildinfo
+
+# Playwright MCP 调试副产品
+.playwright-mcp/
+
+.idea
+
+# 本地 agent 配置 / 无关的个人 skill —— 不进开源包
+.claude/
+.agents/
+
+# 运行时落盘的 run 数据（journal / events / agent traces）
+.workflow-runs/

@@ -5,6 +5,21 @@
 >
 > 中文版见 [README.zh.md](./README.zh.md)。
 
+## Why this exists
+
+Anthropic's dynamic workflows are powerful — but they only run inside Anthropic's own
+harness, and they're gated behind a Max subscription. This is an open-source
+reimplementation of the same model (fan a deterministic script out across many subagents),
+without those limits:
+
+- **Any model.** Every `agent()` call goes through a pluggable `Executor`. The bundled
+  adapter drives `claude --print`; point it at any other model, API, or backend — no lock-in.
+- **Shipped as a skill + a CLI.** Not a feature buried in one product. The skill teaches an
+  agent to *write* workflows; the CLI *runs* them. Plain, portable open source.
+- **Drops into any coding agent.** Since it's just a skill + a CLI, wire it into whatever you
+  already use — Claude Code, Codex, Cursor, your own harness — automate it from the terminal,
+  or call it from the cloud.
+
 ## Install
 
 **Install the skill** — your agent reads it to author and run workflows:
@@ -38,5 +53,9 @@ npm run build        # tsc → dist/
 npm run typecheck    # tsc --noEmit (strict)
 npm run smoke        # all tests via an injected fake executor — zero tokens, no real claude
 ```
+
+## Contributing
+
+Issues, PRs, and ⭐ stars are all welcome — bug reports, new executors (e.g. a Codex adapter), docs, or ideas.
 
 License: MIT.

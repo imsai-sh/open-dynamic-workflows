@@ -4,6 +4,18 @@
 >
 > English: see [README.md](./README.md)。
 
+## 为什么有这个项目
+
+Anthropic 的动态 workflow 很强,但它只能跑在 Anthropic 自家的 harness 里,而且需要 Max 订阅。
+这是同一套模型(把一段确定性脚本 fan out 成大量 subagent)的开源复刻,去掉了这些限制:
+
+- **任意模型。** 每个 `agent()` 都走可替换的 `Executor`。自带适配器驱动 `claude --print`;换成任意
+  模型 / API / 你自己的后端都行,无厂商绑定。
+- **以 skill + CLI 交付。** 不是埋在某个产品里的功能。skill 教 agent **写** workflow,CLI 负责**跑**。
+  纯粹、可移植的开源。
+- **塞进任意 coding agent。** 因为它就是一份 skill + 一个 CLI,你可以接进任何你在用的工具——
+  Claude Code、Codex、Cursor、你自己的 harness——在终端里自动化,或从云端调用。
+
 ## 安装
 
 **安装 skill** ——你的 agent 靠它来撰写并运行 workflow：
@@ -38,5 +50,9 @@ npm run typecheck    # tsc --noEmit（strict）
 npm run smoke        # 全部测试，走注入的 fake executor——零 token、不碰真 claude
 ```
 
+
+## 贡献
+
+欢迎 star、提 issue、发 PR——bug 反馈、新的 executor(比如 Codex 适配器)、文档、点子都欢迎。
 
 License: MIT.

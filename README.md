@@ -54,6 +54,11 @@ npm run typecheck    # tsc --noEmit (strict)
 npm run smoke        # all tests via an injected fake executor — zero tokens, no real claude
 ```
 
+## Sibling projects
+
+- **[open-claude-design](https://github.com/imsai-sh/open-claude-design)** — an open recreation of Claude Design as a pure web app.
+- **[tui2cli](https://github.com/imsai-sh/tui2cli)** — with Anthropic about to meter `claude -p` and the Agent SDK separately, this wraps the Claude Code TUI (or any other coding TUI) into a programmatically callable CLI that still runs on your subscription quota.
+
 ## Contributing
 
 Issues, PRs, and ⭐ stars are all welcome — bug reports, new executors (e.g. a Codex adapter), docs, or ideas.

@@ -40,6 +40,9 @@ export interface WorkflowMeta {
 // ────────────────────────────────────────────────────────────────────────────
 
 export interface AgentOptions {
+  /** Required: names one key of RunOptions.executors. Enforced at runtime — missing or unknown throws. */
+  /** 必填：指向 RunOptions.executors 的某个 key。运行时强制——缺失或未知则 throw。 */
+  executor: string;
   /** Display label; defaults to a truncated prompt or `agent-N`. */
   /** 显示标签；默认取截断后的 prompt 或 `agent-N`。 */
   label?: string;
@@ -226,9 +229,9 @@ export interface RunOptions {
   concurrency?: number;
   onEvent?: EventSink;
   registryDir?: string;
-  /** Injected executor (defaults to the claude --print executor). Enables testing. */
-  /** 注入的 executor（默认是 claude --print executor）。便于测试。 */
-  executor?: Executor;
+  /** Required named registry of executors. Each agent() picks one by key via AgentOptions.executor; missing/unknown throws. */
+  /** 必填的命名 executor 注册表。每个 agent() 通过 AgentOptions.executor 按 key 选用；缺失/未知则 throw。 */
+  executors: Record<string, Executor>;
   /** Per-agent default timeout. */
   /** 每个 agent 的默认超时。 */
   agentTimeoutMs?: number;
@@ -269,7 +272,9 @@ export interface RunContext {
   cwd: string;
   defaultModel?: string;
   registryDir?: string;
-  executor: Executor;
+  /** Named executor registry; agent() resolves AgentOptions.executor against this map. */
+  /** 命名 executor 注册表；agent() 用 AgentOptions.executor 对照此 map 解析。 */
+  executors: Record<string, Executor>;
   agentTimeoutMs?: number;
   /** Concurrency cap. */
   /** 并发上限。 */

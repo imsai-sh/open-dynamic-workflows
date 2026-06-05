@@ -10,7 +10,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "workflow": "./dist/cli.js"
+    "odw": "./dist/cli.js",
+    "open-dynamic-workflows": "./dist/cli.js"
   },
   "exports": {
     ".": {
@@ -26,7 +27,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx src/cli.ts",
-    "smoke": "tsx --test src/**/*.test.ts"
+    "smoke": "tsx --test 'src/**/*.test.ts'"
   },
   "dependencies": {
     "ajv": "^8.17.1"

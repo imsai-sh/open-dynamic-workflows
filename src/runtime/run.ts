@@ -20,7 +20,6 @@ import type {
   RunContext,
   ProgressEvent,
   WorkflowMeta,
-  Executor,
   EventSink,
   WorkflowRef,
 } from "../types.js";
@@ -29,7 +28,6 @@ import { extractMeta, runScript } from "./sandbox.js";
 import { createHooks } from "./hooks.js";
 import { createSemaphore, createCounter } from "./semaphore.js";
 import { openJournal } from "../journal/journal.js";
-import { claudeExecutor } from "../executor/claude.js";
 
 const now = (): string => new Date().toISOString();
 
@@ -39,31 +37,35 @@ async function readRegistryScript(
   registryDir: string,
   name: string,
 ): Promise<{ source: string; ext: string }> {
+  // Each workflow is a self-contained folder: <registryDir>/<name>/script.{js,mjs}.
+  // 每个 workflow 是一个自包含目录：<registryDir>/<name>/script.{js,mjs}。
   for (const ext of ["js", "mjs"] as const) {
     try {
-      const source = await readFile(path.join(registryDir, `${name}.${ext}`), "utf8");
+      const source = await readFile(path.join(registryDir, name, `script.${ext}`), "utf8");
       return { source, ext };
     } catch {
       // try next extension
       // 尝试下一个扩展名
     }
   }
-  // Also accept a name that already carries its extension.
-  // 也接受本身已带扩展名的 name。
-  try {
-    const source = await readFile(path.join(registryDir, name), "utf8");
-    const ext = path.extname(name).replace(/^\./, "") || "js";
-    return { source, ext };
-  } catch {
-    throw new Error(
-      `cannot resolve workflow "${name}" from registryDir "${registryDir}" (tried .js/.mjs)`,
-    );
-  }
+  throw new Error(
+    `cannot resolve workflow "${name}" — expected ${path.join(registryDir, name, "script.js")} (or script.mjs)`,
+  );
+}
+
+/** Sanitize a workflow name into a filesystem-safe folder slug (its self-contained home). */
+/** 把 workflow 名字净化成文件系统安全的目录 slug（它的自包含主目录）。 */
+function workflowSlug(name: string): string {
+  const s = name.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^\.+/, "");
+  return s.length > 0 ? s : "workflow";
 }
 
 /** Resolve the top-level script source + extension by precedence: scriptPath → script → name. */
 /** 按优先级 scriptPath → script → name 解析顶层脚本的源码 + 扩展名。 */
-async function resolveSource(options: RunOptions): Promise<{ source: string; ext: string }> {
+async function resolveSource(
+  options: RunOptions,
+  registryDir: string,
+): Promise<{ source: string; ext: string }> {
   if (options.scriptPath !== undefined) {
     const source = await readFile(options.scriptPath, "utf8");
     const ext = path.extname(options.scriptPath).replace(/^\./, "") || "js";
@@ -73,10 +75,9 @@ async function resolveSource(options: RunOptions): Promise<{ source: string; ext
     return { source: options.script, ext: "js" };
   }
   if (options.name !== undefined) {
-    if (options.registryDir === undefined) {
-      throw new Error(`RunOptions.name requires registryDir to resolve "${options.name}"`);
-    }
-    return readRegistryScript(options.registryDir, options.name);
+    // Named scripts resolve from the registry dir (defaults to <cwd>/.odw).
+    // 具名脚本从 registry 目录解析（默认 <cwd>/.odw）。
+    return readRegistryScript(registryDir, options.name);
   }
   throw new Error("runWorkflow requires one of: scriptPath, script, or name");
 }
@@ -84,12 +85,24 @@ async function resolveSource(options: RunOptions): Promise<{ source: string; ext
 export async function runWorkflow(options: RunOptions): Promise<WorkflowResult> {
   // (1) Resolve top-level source + extension.
   // (1) 解析顶层源码 + 扩展名。
-  const { source, ext } = await resolveSource(options);
+  // Each workflow gets a self-contained home <cwd>/.odw/<slug>/: the authored script
+  // (script.{js,mjs}) plus all its runs under runs/<runId>/. registryDir is the .odw root.
+  // 每个 workflow 有一个自包含主目录 <cwd>/.odw/<slug>/：撰写的脚本（script.{js,mjs}）
+  // 加上它在 runs/<runId>/ 下的全部运行。registryDir 就是 .odw 根。
+  const cwd = options.cwd ?? process.cwd();
+  const registryDir = options.registryDir ?? path.join(cwd, ".odw");
+  const { source, ext } = await resolveSource(options, registryDir);
 
-  // (2) Journal base dir.
-  // (2) Journal 的基准目录。
-  const baseDir =
-    options.runDir ?? path.resolve(options.cwd ?? process.cwd(), ".workflow-runs");
+  // Extract meta early — its name (or the --name used to launch) is the slug that keeps
+  // this workflow's script and runs together in one folder.
+  // 提早抽 meta —— 它的 name（或启动用的 --name）就是把本 workflow 的脚本与 runs
+  // 收拢到同一文件夹的 slug。
+  const meta: WorkflowMeta = extractMeta(source);
+  const slug = workflowSlug(options.name ?? meta.name);
+
+  // (2) Journal base dir: <cwd>/.odw/<slug>/runs (override with runDir).
+  // (2) Journal 的基准目录：<cwd>/.odw/<slug>/runs（可用 runDir 覆盖）。
+  const baseDir = options.runDir ?? path.join(cwd, ".odw", slug, "runs");
 
   // (3) Open journal + persist the resolved script.
   // (3) 打开 journal + 持久化已解析的脚本。
@@ -130,11 +143,14 @@ export async function runWorkflow(options: RunOptions): Promise<WorkflowResult> 
     options.onEvent?.(e);
   };
 
-  // (7) Executor (injectable for tests; defaults to claude --print).
-  // (7) Executor（可注入便于测试；默认为 claude --print）。
-  const executor: Executor = options.executor ?? claudeExecutor;
-
-  const cwd = options.cwd ?? process.cwd();
+  // (7) Executor registry. Required and non-empty — there is NO default executor;
+  // each agent() must name one by key (resolved in hooks.ts). Fail fast otherwise.
+  // (7) Executor 注册表。必填且非空——没有默认 executor；每个 agent() 必须按 key
+  // 指定一个（在 hooks.ts 中解析）。否则 fail fast。
+  const executors = options.executors;
+  if (!executors || Object.keys(executors).length === 0) {
+    throw new Error("runWorkflow requires a non-empty 'executors' map");
+  }
 
   // Run a script body at a given nesting depth under a fresh RunContext that shares the
   // 在给定嵌套深度下、用一个全新的 RunContext 运行脚本体，该 RunContext 共享
@@ -145,7 +161,7 @@ export async function runWorkflow(options: RunOptions): Promise<WorkflowResult> 
       runId: journal.runId,
       runDir: journal.runDir,
       cwd,
-      executor,
+      executors,
       concurrency,
       depth,
       emit,
@@ -157,8 +173,8 @@ export async function runWorkflow(options: RunOptions): Promise<WorkflowResult> 
       addTokens: (n) => {
         tokensSpent += n;
       },
+      registryDir,
       ...(options.model !== undefined ? { defaultModel: options.model } : {}),
-      ...(options.registryDir !== undefined ? { registryDir: options.registryDir } : {}),
       ...(options.agentTimeoutMs !== undefined ? { agentTimeoutMs: options.agentTimeoutMs } : {}),
     };
 
@@ -170,10 +186,7 @@ export async function runWorkflow(options: RunOptions): Promise<WorkflowResult> 
       }
       let childSource: string;
       if (typeof ref === "string") {
-        if (options.registryDir === undefined) {
-          throw new Error(`workflow("${ref}") requires registryDir to resolve`);
-        }
-        childSource = (await readRegistryScript(options.registryDir, ref)).source;
+        childSource = (await readRegistryScript(registryDir, ref)).source;
       } else {
         childSource = await readFile(ref.scriptPath, "utf8");
       }
@@ -193,7 +206,6 @@ export async function runWorkflow(options: RunOptions): Promise<WorkflowResult> 
 
   // TOP LEVEL.
   // 顶层。
-  const meta: WorkflowMeta = extractMeta(source);
   emit({ type: "run_start", runId: journal.runId, meta, ts: now() });
 
   const startedAt = Date.now();

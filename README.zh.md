@@ -12,17 +12,24 @@ Anthropic 的动态 workflow 很强,但它只能跑在 Anthropic 自家的 harne
 - **任意模型。** 每个 `agent()` 都走可替换的 `Executor`。自带适配器驱动 `claude --print`;换成任意
   模型 / API / 你自己的后端都行,无厂商绑定。
 - **以 skill + CLI 交付。** 不是埋在某个产品里的功能。skill 教 agent **写** workflow,CLI 负责**跑**。
-  纯粹、可移植的开源。
+  纯粹、可移植的开源。 
+  - Claude Code实现dynamic-workflows的方式是内置tool，这个仓库使用skill的形式复刻，更加通用可移植
+
 - **塞进任意 coding agent。** 因为它就是一份 skill + 一个 CLI,你可以接进任何你在用的工具——
   Claude Code、Codex、Cursor、你自己的 harness——在终端里自动化,或从云端调用。
 
 ## 安装
 
-**安装 skill** ——你的 agent 靠它来撰写并运行 workflow：
+只需一行命令安装此skill，剩下的交给你的coding agent:
 
 ```bash
 npx skills add imsai-sh/open-dynamic-workflows
 ```
+
+然后你的coding agent在触发此skill时，会自动安装cli。
+
+还可以明确指定/open-dynamic-workflows，让agent只编写workflow脚本暂不执行，以便
+进行人工审查或者在自动化脚本中重复调用workflow.js
 
 ## 模块地图
 

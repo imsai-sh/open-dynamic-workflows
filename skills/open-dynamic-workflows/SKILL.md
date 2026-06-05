@@ -64,10 +64,14 @@ These are injected into the script scope:
 - **`agent(prompt, opts?) → Promise<any>`** — spawn one subagent. Without `schema`, resolves
   to its final text. With `schema` (a JSON Schema), the subagent is forced to produce a
   matching object and `agent()` resolves to the **validated object**. Returns `null` if the
-  agent is skipped/aborted (filter with `.filter(Boolean)`). `opts`: `label` (short display
-  label), `phase` (assign to a progress group — **use this inside parallel/pipeline stages**),
+  agent is skipped/aborted (filter with `.filter(Boolean)`). `opts`: `executor` (**required** —
+  picks which agent CLI runs this node, by name, from the registry the host provides, e.g.
+  `'claude'` or `'codex'`; an unknown name fails the run), `label` (short display label),
+  `phase` (assign to a progress group — **use this inside parallel/pipeline stages**),
   `schema`, `model` (override; omit to inherit), `isolation:'worktree'` (fresh git worktree —
   EXPENSIVE, only when agents mutate files in parallel), `agentType` (named subagent preset).
+  Each node names its own executor — there is **no default**, so different nodes in one script
+  can run on different CLIs (see the per-node example below).
 - **`pipeline(items, stage1, stage2, …) → Promise<any[]>`** — run each item through all
   stages independently, **NO barrier between stages** (item A can be in stage 3 while item B
   is in stage 1). Each stage callback gets `(prevResult, originalItem, index)`. A throwing
@@ -86,9 +90,23 @@ These are injected into the script scope:
 A subagent's **final text is its return value** — raw data for the script, not a message to a
 human. That's why `schema` (a validated object comes back) and a closing synthesis agent matter.
 
+Because `executor` is **per node**, one script can mix CLIs — e.g. have one CLI draft and a
+different one review, when you want the verifier to be a different model from the author:
+
+```js
+// Each agent() names its own CLI. Both 'claude' and 'codex' come from the host's registry.
+const draft = await agent('Draft a fix for this failing test.', { executor: 'claude', label: 'draft' })
+const review = await agent(`Independently review this fix — is it correct?\n\n${draft}`, {
+  executor: 'codex', label: 'review', schema: VERDICT_SCHEMA,
+})
+return { draft, review }
+```
+
 ### 3. Rules that the runtime enforces (fail fast)
 
 - **Plain JS only**: no `import`, `require`, `fs`, or Node APIs in the script.
+- **Every `agent()` needs an `executor`**: there is no default. A missing or unknown executor
+  name (one not in the host's registry) fails the run with a clear error.
 - **Determinism**: `Date.now()`, `Math.random()`, and argless `new Date()` are unavailable
   (they would break resume). Pass timestamps via `args`; vary by index instead of random.
 - **Structured output**: `opts.schema` is a JSON Schema whose **root must be `type:"object"`**
@@ -158,12 +176,12 @@ const DIMENSIONS = [
 
 const results = await pipeline(
   DIMENSIONS,
-  (d) => agent(d.prompt, { label: `review:${d.key}`, phase: 'Review', schema: FINDINGS_SCHEMA }),
+  (d) => agent(d.prompt, { executor: 'claude', label: `review:${d.key}`, phase: 'Review', schema: FINDINGS_SCHEMA }),
   (review) =>
     parallel(
       review.findings.map((f) => () =>
         agent(`Adversarially verify this finding — is it real? ${f.title}`, {
-          label: `verify:${f.file}`, phase: 'Verify', schema: VERDICT_SCHEMA,
+          executor: 'claude', label: `verify:${f.file}`, phase: 'Verify', schema: VERDICT_SCHEMA,
         }).then((v) => ({ ...f, verdict: v })),
       ),
     ),
@@ -186,20 +204,24 @@ structure — the example only teaches the primitives.
 
 ## How to RUN a workflow (this project's runtime)
 
-Write the script to a `.js` file. If the runtime CLI isn't installed yet, install it first
-(it provides the `workflow` command):
+Save the script as **`.odw/<name>/script.js`** in your project — each workflow gets its own
+self-contained folder. If the CLI isn't installed yet, install it first (it provides the
+`odw` command, aliased `open-dynamic-workflows`):
 
 ```bash
-npm install -g open-dynamic-workflows      # provides the `workflow` command
+npm install -g open-dynamic-workflows      # provides the `odw` command
 ```
 
-Then run the script:
+Then run it — by name (resolves `.odw/<name>/script.js`) or by an explicit path:
 
 ```bash
-workflow run path/to/script.js [--args '<json>'] [--model <id>] [--resume <runId>]
-# e.g.
-workflow run audit.js --args '{"dir":"src"}'
+odw run --name audit --args '{"dir":"src"}'        # runs .odw/audit/script.js
+odw run path/to/script.js [--args '<json>'] [--model <id>] [--resume <runId>]
 ```
+
+Each run's artifacts (source snapshot, journal, events, per-agent traces) land under that
+workflow's folder at **`.odw/<name>/runs/<runId>/`** — gitignore `.odw/*/runs/` (your
+`.odw/<name>/script.js` scripts stay tracked).
 
 Or embed it programmatically:
 
@@ -221,6 +243,11 @@ const result = await runWorkflow({
   with unchanged `(prompt, opts)` replay from cache with **zero token spend**; the rest run live.
 - **Progress / cost**: each agent's cost, tokens, and duration stream via `onEvent` and a
   terminal live tree; the full event log is persisted under the run dir.
+- **Troubleshooting a failed agent**: the failure reason is shown inline — e.g. `agent failed
+  (subtype=error_during_execution): You've hit your usage limit…` — not just an opaque subtype.
+  Full detail (the spawned argv, exit code, stderr, and raw event stream) is persisted to
+  `<runDir>/agents/agent-N.jsonl`. Set `ODW_DEBUG=1` to also stream each spawn's argv, exit
+  status, and a stderr tail live to stderr.
 
 > In Claude Code itself, the equivalent is the built-in `Workflow` tool (the model writes a
 > script and calls it; ultracode auto-decides; runs in the background under `/workflows`).

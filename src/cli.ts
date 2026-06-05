@@ -3,18 +3,20 @@
 // cli.ts —— argv → runWorkflow → 终端实时树状视图。手写的 flag 解析器
 // (no deps). Usage:
 // （无依赖）。用法：
-//   workflow run <scriptPath> [--name <name>] [--args <json>] [--resume <runId>]
+//   odw run <scriptPath> [--name <name>] [--args <json>] [--resume <runId>]
 //                             [--cwd <dir>] [--model <id>]
 //                             [--run-dir <dir>] [--no-tree]
 
 import { runWorkflow } from "./runtime/run.js";
+import { builtinExecutors } from "./index.js";
 import { createTreeRenderer } from "./progress/tree.js";
 import type { RunOptions } from "./types.js";
 
 const USAGE =
-  "usage: workflow run <scriptPath> [--name <name>] [--args <json>] " +
+  "usage: odw run <scriptPath> [--name <name>] [--args <json>] " +
   "[--resume <runId>] [--cwd <dir>] [--model <id>] " +
-  "[--run-dir <dir>] [--no-tree]\n";
+  "[--run-dir <dir>] [--no-tree]\n" +
+  "\nScripts must pick a CLI per node: every agent() needs {executor:'claude'|'codex'}.\n";
 
 // Flags that take a following value; everything else is boolean or positional.
 // 需要紧跟一个取值的 flag；其余都按布尔 flag 或位置参数处理。
@@ -83,7 +85,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const opts: RunOptions = {};
+  // The CLI ships the built-in registry; there is no --executor flag because there is
+  // no default — each agent() names its CLI in the script (e.g. {executor:'codex'}).
+  // CLI 内置注册表；没有 --executor flag，因为没有默认值——每个 agent() 在脚本里
+  // 指定自己的 CLI（如 {executor:'codex'}）。
+  const opts: RunOptions = { executors: builtinExecutors };
   if (scriptPath !== undefined) opts.scriptPath = scriptPath;
   if (name !== undefined) opts.name = name;
 

@@ -57,6 +57,17 @@ function presetFor(agentType?: string): string | undefined {
 
 const nowIso = (): string => new Date().toISOString();
 
+// Collapse whitespace + truncate so an executor's failure reason (a turn.failed message or
+// a multi-line stderr tail, surfaced into ExecResult.text) embeds cleanly into the thrown
+// Error and the agent_end event the progress tree renders — a real reason, not just a subtype.
+// 折叠空白 + 截断,让执行器的失败原因(turn.failed 消息或多行 stderr 末尾,已兜进
+// ExecResult.text)干净地嵌进抛出的 Error 和进度树渲染的 agent_end 事件——给出真实原因,
+// 而不只是一个 subtype。
+function oneLine(s: string, max = 300): string {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
 // Best-effort temp git worktree for isolation:"worktree". Returns the worktree dir, or
 // 为 isolation:"worktree" 尽力创建临时 git worktree。返回 worktree 目录，
 // null on any git failure (caller then falls back to ctx.cwd with a warning).
@@ -96,7 +107,14 @@ function cleanupWorktree(repoCwd: string, wtDir: string): void {
 
 export function createHooks(ctx: RunContext, deps: HookDeps): ScriptHooks {
   const agent = async (prompt: string, opts?: AgentOptions): Promise<unknown> => {
-    const o = opts ?? {};
+    // `executor` is required in the public AgentOptions type, but the runtime must still
+    // tolerate `agent(prompt)` with no opts at all so it can fail fast with a helpful
+    // message (INVARIANT #10 — no default executor). Model the fallback as Partial so the
+    // "missing executor" path stays reachable and type-checks (o.executor is then string | undefined).
+    // `executor` 在公开的 AgentOptions 类型里是必填的，但运行时仍须容忍完全不传 opts 的
+    // `agent(prompt)`，以便 fail fast 给出有用的报错（不变量 #10——没有默认 executor）。
+    // 把回退建模为 Partial，使「缺 executor」分支可达且能通过类型检查（此时 o.executor 为 string | undefined）。
+    const o: Partial<AgentOptions> = opts ?? {};
     const key = keyFor(prompt, o);
     const id = ctx.nextAgentId();
     const label = o.label ?? prompt.slice(0, 60);
@@ -150,7 +168,26 @@ export function createHooks(ctx: RunContext, deps: HookDeps): ScriptHooks {
         ...(ctx.agentTimeoutMs !== undefined ? { timeoutMs: ctx.agentTimeoutMs } : {}),
       };
 
-      const res = await ctx.executor(execOpts);
+      // Resolve the executor by name from the run's registry. No default: a missing
+      // or unknown name fails fast (INVARIANT — never silently fall back). This throw
+      // sits inside the try after semaphore.acquire(), so it unwinds through catch:
+      // agent_end{ok:false} is emitted and the semaphore is released in finally.
+      // 按名字从本次 run 的注册表解析 executor。没有默认值：缺失或未知的名字 fail fast
+      //（不变量——绝不静默回退）。该 throw 位于 semaphore.acquire() 之后的 try 内，
+      // 因此会经 catch 回退：发出 agent_end{ok:false}，并在 finally 中 release 信号量。
+      if (!o.executor) {
+        throw new Error(
+          `agent() requires an 'executor' (one of: ${Object.keys(ctx.executors).join(", ")})`,
+        );
+      }
+      const executor = ctx.executors[o.executor];
+      if (executor === undefined) {
+        throw new Error(
+          `unknown executor "${o.executor}" (registered: ${Object.keys(ctx.executors).join(", ")})`,
+        );
+      }
+
+      const res = await executor(execOpts);
       ctx.addTokens(res.usage.outputTokens);
 
       let value: unknown;
@@ -161,14 +198,20 @@ export function createHooks(ctx: RunContext, deps: HookDeps): ScriptHooks {
         ) {
           value = res.structuredOutput;
         } else {
-          throw new Error("structured output failed subtype=" + res.resultSubtype);
+          throw new Error(
+            `structured output failed (subtype=${res.resultSubtype})` +
+              (res.text ? `: ${oneLine(res.text)}` : ""),
+          );
         }
       } else {
         value = res.text;
       }
 
       if (res.isError && res.resultSubtype !== "success") {
-        throw new Error("agent failed subtype=" + res.resultSubtype);
+        throw new Error(
+          `agent failed (subtype=${res.resultSubtype})` +
+            (res.text ? `: ${oneLine(res.text)}` : ""),
+        );
       }
 
       ctx.emit({

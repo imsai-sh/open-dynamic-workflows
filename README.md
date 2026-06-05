@@ -12,8 +12,9 @@ harness, and they're gated behind a Max subscription. This is an open-source
 reimplementation of the same model (fan a deterministic script out across many subagents),
 without those limits:
 
-- **Any model.** Every `agent()` call goes through a pluggable `Executor`. The bundled
-  adapter drives `claude --print`; point it at any other model, API, or backend — no lock-in.
+- **Any model.** Every `agent()` chooses its `Executor` by name. Bundled adapters drive
+  `claude --print` and `codex exec` — different nodes can run on different CLIs — and you can
+  plug in any other model, API, or backend. No lock-in.
 - **Shipped as a skill + a CLI.** Not a feature buried in one product. The skill teaches an
   agent to *write* workflows; the CLI *runs* them. Plain, portable open source.
 - **Drops into any coding agent.** Since it's just a skill + a CLI, wire it into whatever you
@@ -22,36 +23,46 @@ without those limits:
 
 ## Install
 
-**Install the skill** — your agent reads it to author and run workflows:
+One command installs the skill; your coding agent takes it from there:
 
 ```bash
 npx skills add imsai-sh/open-dynamic-workflows
 ```
 
+You can also invoke `/open-dynamic-workflows` explicitly to have the agent only *write* the workflow script without running it — handy for human review, or for re-running the generated `workflow.js` from your own automation.
+
 ## Module map
 
-| file | what it owns |
-| :--- | :--- |
-| `src/types.ts` | the frozen shared contract (every module codes against it) |
-| `src/executor/claude.ts` | spawn `claude --print`, parse stream-json → `ExecResult` — the only place that touches `claude` |
-| `src/executor/stream-json.ts` | the stream-json event parser |
-| `src/schema/validate.ts` | ajv wrapper, `--json-schema` arg building, root-`object` guard |
-| `src/runtime/semaphore.ts` | concurrency cap (`min(16, cpus-2)`) + the 1000-agent backstop + abort |
-| `src/runtime/hooks.ts` | `agent`/`parallel`/`pipeline`/`phase`/`log`/`workflow` bound to a run context |
-| `src/runtime/sandbox.ts` | extract `meta`, run the script in `node:vm`, enforce the determinism guard |
-| `src/runtime/run.ts` | `runWorkflow()` — wires sandbox + hooks + executor + journal + progress + abort |
-| `src/journal/journal.ts` | runId, persisted script, `journal.jsonl`, `events.jsonl`, resume cache |
-| `src/progress/tree.ts` | `ProgressEvent` → terminal live tree |
-| `src/cli.ts` | CLI entry: argv → `runWorkflow` → render |
-| `src/index.ts` | public exports: `runWorkflow` + `claudeExecutor` + types |
+```
+src/
+├── types.ts              ← frozen shared contract — every module codes against it
+├── index.ts              ← public API: runWorkflow + claudeExecutor / codexExecutor + builtinExecutors + types
+├── cli.ts                ← CLI entry: argv → runWorkflow → live tree
+├── executor/             ← one subfolder per CLI; subprocess.ts is the shared, CLI-agnostic driver
+│   ├── subprocess.ts     ← spawn · process-group kill · wall/idle/abort watchdogs · line buffering · ExecTrace
+│   ├── claude/
+│   │   ├── claude.ts     ← spawn `claude --print` — the only place that touches claude
+│   │   └── stream-json.ts ← claude stream-json event reducer (pure)
+│   └── codex/
+│       ├── codex.ts      ← spawn `codex exec --json` — the only place that touches codex
+│       └── codex-jsonl.ts ← codex JSONL event reducer (pure)
+├── schema/validate.ts    ← ajv + `--json-schema` building + root-`object` guard
+├── runtime/
+│   ├── semaphore.ts      ← concurrency cap (min(16, cpus-2)) + 1000-agent backstop + abort
+│   ├── hooks.ts          ← agent / parallel / pipeline / phase / log / workflow, bound to a run context
+│   ├── sandbox.ts        ← extract meta · run the script in node:vm · determinism guard
+│   └── run.ts            ← runWorkflow() — wires sandbox + hooks + executors + journal + progress
+├── journal/journal.ts    ← runId · persisted script · journal.jsonl · events.jsonl · resume cache
+└── progress/tree.ts      ← ProgressEvent → terminal live tree
+```
 
-### Develop & test
+## Develop & test
 
 ```bash
 npm install
 npm run build        # tsc → dist/
 npm run typecheck    # tsc --noEmit (strict)
-npm run smoke        # all tests via an injected fake executor — zero tokens, no real claude
+npm run smoke        # all tests — zero tokens, no real model CLI (claude/codex)
 ```
 
 ## Sibling projects
@@ -61,6 +72,6 @@ npm run smoke        # all tests via an injected fake executor — zero tokens, 
 
 ## Contributing
 
-Issues, PRs, and ⭐ stars are all welcome — bug reports, new executors (e.g. a Codex adapter), docs, or ideas.
+Issues, PRs, and ⭐ stars are all welcome — bug reports, new executors (e.g. a Gemini or DeepSeek adapter), docs, or ideas.
 
 License: MIT.
